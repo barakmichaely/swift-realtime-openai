@@ -77,6 +77,11 @@ public final class RealtimeAPI: NSObject, Sendable {
 		let message = try URLSessionWebSocketTask.Message.string(String(data: encoder.encode(event), encoding: .utf8)!)
 		try await task.send(message)
 	}
+     
+     public func send(customEvent: Encodable) async throws {
+          let message = try URLSessionWebSocketTask.Message.string(String(data: encoder.encode(customEvent), encoding: .utf8)!)
+          try await task.send(message)
+     }
 }
 
 extension RealtimeAPI: URLSessionWebSocketDelegate {

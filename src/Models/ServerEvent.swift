@@ -359,6 +359,9 @@ public enum ServerEvent: Sendable {
 	case responseFunctionCallArgumentsDone(ResponseFunctionCallArgumentsDoneEvent)
 	/// Emitted after every "response.done" event to indicate the updated rate limits.
 	case rateLimitsUpdated(RateLimitsUpdatedEvent)
+     /// Returned when event type isn't recognized
+     case unknown(type: String, data: JSON)
+
 }
 
 extension ServerEvent: Identifiable {
@@ -420,6 +423,13 @@ extension ServerEvent: Identifiable {
 				return event.eventId
 			case let .rateLimitsUpdated(event):
 				return event.eventId
+               case let .unknown(type, data):
+                    // Try to extract "eventId" from the data if it exists
+                    if case let .object(dataDict) = data, let eventId = dataDict["eventId"], case let .string(eventIdString) = eventId {
+                     return eventIdString
+                    }
+                    // Fallback to using the event type as the ID
+                    return type
 		}
 	}
 }
@@ -490,8 +500,11 @@ extension ServerEvent: Decodable {
 				self = try .responseFunctionCallArgumentsDone(ResponseFunctionCallArgumentsDoneEvent(from: decoder))
 			case "rate_limits.updated":
 				self = try .rateLimitsUpdated(RateLimitsUpdatedEvent(from: decoder))
-			default:
-				throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown event type: \(eventType)")
+               default:
+                    let rawData = try JSON(from: decoder)
+                    self = .unknown(type: eventType, data: rawData)
+//			default:
+//				throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown event type: \(eventType)")
 		}
 	}
 }
