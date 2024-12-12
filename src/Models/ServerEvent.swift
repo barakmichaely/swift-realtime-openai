@@ -302,6 +302,10 @@ public enum ServerEvent: Sendable {
 		/// List of rate limit information.
 		public let rateLimits: [RateLimit]
 	}
+     public struct UnknownEvent: Decodable, Sendable {
+          public let type: String
+          public let data: JSON
+     }
 
 	/// Returned when an error occurs.
 	case error(ErrorEvent)
@@ -360,7 +364,7 @@ public enum ServerEvent: Sendable {
 	/// Emitted after every "response.done" event to indicate the updated rate limits.
 	case rateLimitsUpdated(RateLimitsUpdatedEvent)
      /// Returned when event type isn't recognized
-     case unknown(type: String, data: JSON)
+     case unknown(UnknownEvent)
 
 }
 
@@ -423,13 +427,13 @@ extension ServerEvent: Identifiable {
 				return event.eventId
 			case let .rateLimitsUpdated(event):
 				return event.eventId
-               case let .unknown(type, data):
+               case let .unknown(event):
                     // Try to extract "eventId" from the data if it exists
-                    if case let .object(dataDict) = data, let eventId = dataDict["eventId"], case let .string(eventIdString) = eventId {
+               if case let .object(dataDict) = event.data, let eventId = dataDict["eventId"], case let .string(eventIdString) = eventId {
                      return eventIdString
                     }
                     // Fallback to using the event type as the ID
-                    return type
+               return event.type
 		}
 	}
 }
@@ -502,7 +506,7 @@ extension ServerEvent: Decodable {
 				self = try .rateLimitsUpdated(RateLimitsUpdatedEvent(from: decoder))
                default:
                     let rawData = try JSON(from: decoder)
-                    self = .unknown(type: eventType, data: rawData)
+                    self = .unknown(UnknownEvent(type: eventType, data: rawData))
 //			default:
 //				throw DecodingError.dataCorruptedError(forKey: .type, in: container, debugDescription: "Unknown event type: \(eventType)")
 		}
