@@ -50,7 +50,6 @@ public final class WebSocketConnector: NSObject, Connector, Sendable {
      }
      
      public func disconnect() {
-          task.delegate = nil
           task.cancel(with: .goingAway, reason: nil)
           stream.finish()
      }
