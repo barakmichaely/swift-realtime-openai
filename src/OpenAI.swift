@@ -26,6 +26,9 @@ public final class RealtimeAPI: NSObject, Sendable {
 		super.init()
 	}
 
+     public func disconnect() {
+          self.connector.disconnect()
+     }
 	public func send(event: ClientEvent) async throws {
 		try await connector.send(event: event)
 	}

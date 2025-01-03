@@ -39,12 +39,6 @@ public final class WebSocketConnector: NSObject, Connector, Sendable {
 		onDisconnect?()
 	}
      
-     public func disconnect() {
-          task.delegate = nil
-          task.cancel(with: .goingAway, reason: nil)
-          stream.finish()
-     }
-
 	public func send(event: ClientEvent) async throws {
 		let message = try URLSessionWebSocketTask.Message.string(String(data: encoder.encode(event), encoding: .utf8)!)
 		try await task.send(message)
@@ -53,6 +47,12 @@ public final class WebSocketConnector: NSObject, Connector, Sendable {
      public func send(customEvent: Encodable) async throws {
           let message = try URLSessionWebSocketTask.Message.string(String(data: encoder.encode(customEvent), encoding: .utf8)!)
           try await task.send(message)
+     }
+     
+     public func disconnect() {
+          task.delegate = nil
+          task.cancel(with: .goingAway, reason: nil)
+          stream.finish()
      }
 
 	@MainActor public func onDisconnect(_ action: (@Sendable () -> Void)?) {

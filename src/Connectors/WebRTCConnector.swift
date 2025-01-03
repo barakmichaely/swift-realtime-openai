@@ -79,6 +79,15 @@ public final class WebRTCConnector: NSObject, Connector, Sendable {
 	public func send(event: ClientEvent) async throws {
 		try dataChannel.sendData(RTCDataBuffer(data: encoder.encode(event), isBinary: false))
 	}
+     
+     public func send(customEvent: Encodable) async throws {
+          try dataChannel.sendData(RTCDataBuffer(data: encoder.encode(customEvent), isBinary: false))
+     }
+     
+     public func disconnect() {
+          connection.close()
+          stream.finish()
+     }
 
 	@MainActor public func onDisconnect(_ action: (@Sendable () -> Void)?) {
 		onDisconnect = action

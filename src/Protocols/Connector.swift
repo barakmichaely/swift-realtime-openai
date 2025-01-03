@@ -12,6 +12,8 @@ public protocol Connector: Sendable {
 	func send(event: ClientEvent) async throws
      
      func send(customEvent: Encodable) async throws
+     
+     func disconnect()
 
 	@MainActor func onDisconnect(_ action: (@Sendable () -> Void)?)
 }
