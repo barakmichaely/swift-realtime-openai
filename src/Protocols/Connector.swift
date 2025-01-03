@@ -10,6 +10,8 @@ public protocol Connector: Sendable {
 	init(connectingTo request: URLRequest) async throws
 
 	func send(event: ClientEvent) async throws
+     
+     func send(customEvent: Encodable) async throws
 
 	@MainActor func onDisconnect(_ action: (@Sendable () -> Void)?)
 }

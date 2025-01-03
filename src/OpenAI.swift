@@ -29,6 +29,9 @@ public final class RealtimeAPI: NSObject, Sendable {
 	public func send(event: ClientEvent) async throws {
 		try await connector.send(event: event)
 	}
+     public func send(customEvent: Encodable) async throws {
+          try await connector.send(customEvent: customEvent)
+     }
 }
 
 /// Helper methods for connecting to the OpenAI Realtime API.
@@ -64,9 +67,4 @@ extension RealtimeAPI {
 		request.addValue("Bearer \(authToken)", forHTTPHeaderField: "Authorization")
 		return try await webRTC(connectingTo: request)
 	}
-     
-     public func send(customEvent: Encodable) async throws {
-          let message = try URLSessionWebSocketTask.Message.string(String(data: encoder.encode(customEvent), encoding: .utf8)!)
-          try await task.send(message)
-     }
 }
