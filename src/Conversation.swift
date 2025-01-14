@@ -211,13 +211,18 @@ public extension Conversation {
 		}
 		userConverter.set(converter)
 
+		#if os(iOS)
 		let audioSession = AVAudioSession.sharedInstance()
 		try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
 		try audioSession.setActive(true)
+		#endif
 
 		audioEngine.attach(playerNode)
 		audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: converter.inputFormat)
+
+		#if os(iOS)
 		try audioEngine.inputNode.setVoiceProcessingEnabled(true)
+		#endif
 
 		audioEngine.prepare()
 		do {
@@ -225,6 +230,7 @@ public extension Conversation {
 			handlingVoice = true
 		} catch {
 			print("Failed to enable audio engine: \(error)")
+
 			audioEngine.disconnectNodeInput(playerNode)
 			audioEngine.disconnectNodeOutput(playerNode)
 
@@ -264,7 +270,14 @@ public extension Conversation {
 		audioEngine.disconnectNodeInput(playerNode)
 		audioEngine.disconnectNodeOutput(playerNode)
 
+		#if os(iOS)
 		try? AVAudioSession.sharedInstance().setActive(false)
+		#elseif os(macOS)
+		if audioEngine.isRunning {
+			audioEngine.stop()
+			audioEngine.reset()
+		}
+		#endif
 
 		isListening = false
 		handlingVoice = false
@@ -346,6 +359,12 @@ private extension Conversation {
 				if handlingVoice { interruptSpeech() }
 			case .inputAudioBufferSpeechStopped:
 				isUserSpeaking = false
+            case let .responseOutputItemDone(event):
+                updateEvent(id: event.item.id) { message in
+                    guard case let .message(newMessage) = event.item else { return }
+                    
+                    message = newMessage
+                }
 			default:
 				return
 		}
