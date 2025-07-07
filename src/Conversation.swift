@@ -7,11 +7,12 @@ public enum ConversationError: Error {
 }
 
 @Observable
-public final class Conversation: Sendable {
+public final class Conversation: @unchecked Sendable {
 	private let client: RealtimeAPI
-	@MainActor private var cancelTask: (() -> Void)?
+	@MainActor private var isInterrupting: Bool = false
 	private let errorStream: AsyncStream<ServerError>.Continuation
 
+	private var task: Task<Void, Error>!
 	private let audioEngine = AVAudioEngine()
 	private let playerNode = AVAudioPlayerNode()
 	private let queuedSamples = UnsafeMutableArray<String>()
@@ -60,21 +61,20 @@ public final class Conversation: Sendable {
 		self.client = client
 		(errors, errorStream) = AsyncStream.makeStream(of: ServerError.self)
 
-		let task = Task.detached { [weak self] in
-			guard let self else { return }
+		let events = client.events
+		task = Task.detached { [weak self] in
+			for try await event in events {
+				guard !Task.isCancelled else { break }
 
-			for try await event in client.events {
-				await self.handleEvent(event)
+				await self?.handleEvent(event)
 			}
 
-			await MainActor.run {
-				self.connected = false
+			await MainActor.run { [weak self] in
+				self?.connected = false
 			}
 		}
 
 		Task { @MainActor in
-			self.cancelTask = task.cancel
-
 			client.onDisconnect = { [weak self] in
 				guard let self else { return }
 
@@ -88,11 +88,11 @@ public final class Conversation: Sendable {
 	}
 
 	deinit {
+		task.cancel()
 		errorStream.finish()
 
-		DispatchQueue.main.asyncAndWait {
-			cancelTask?()
-			stopHandlingVoice()
+		Task { [playerNode, audioEngine] in
+			Self.cleanUpAudio(playerNode: playerNode, audioEngine: audioEngine)
 		}
 	}
 
@@ -184,8 +184,8 @@ public extension Conversation {
 		guard !isListening else { return }
 		if !handlingVoice { try startHandlingVoice() }
 
-		Task.detached {
-			self.audioEngine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: self.audioEngine.inputNode.outputFormat(forBus: 0)) { [weak self] buffer, _ in
+		Task.detached { [audioEngine] in
+			audioEngine.inputNode.installTap(onBus: 0, bufferSize: 4096, format: audioEngine.inputNode.outputFormat(forBus: 0)) { [weak self] buffer, _ in
 				self?.processAudioBufferFromUser(buffer: buffer)
 			}
 		}
@@ -211,12 +211,6 @@ public extension Conversation {
 		}
 		userConverter.set(converter)
 
-		#if os(iOS)
-		let audioSession = AVAudioSession.sharedInstance()
-		try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
-		try audioSession.setActive(true)
-		#endif
-
 		audioEngine.attach(playerNode)
 		audioEngine.connect(playerNode, to: audioEngine.mainMixerNode, format: converter.inputFormat)
 
@@ -227,6 +221,13 @@ public extension Conversation {
 		audioEngine.prepare()
 		do {
 			try audioEngine.start()
+
+			#if os(iOS)
+			let audioSession = AVAudioSession.sharedInstance()
+			try audioSession.setCategory(.playAndRecord, mode: .voiceChat, options: [.defaultToSpeaker, .allowBluetooth])
+			try audioSession.setActive(true)
+			#endif
+
 			handlingVoice = true
 		} catch {
 			print("Failed to enable audio engine: \(error)")
@@ -241,6 +242,9 @@ public extension Conversation {
 	/// Interrupt the model's response if it's currently playing.
 	/// This lets the model know that the user didn't hear the full response.
 	@MainActor func interruptSpeech() {
+		guard !isInterrupting else { return }
+		isInterrupting = true
+
 		if isPlaying,
 		   let nodeTime = playerNode.lastRenderTime,
 		   let playerTime = playerNode.playerTime(forNodeTime: nodeTime),
@@ -248,7 +252,7 @@ public extension Conversation {
 		{
 			let audioTimeInMiliseconds = Int((Double(playerTime.sampleTime) / playerTime.sampleRate) * 1000)
 
-			Task {
+			Task { [client] in
 				do {
 					try await client.send(event: .truncateConversationItem(forItem: itemID, atAudioMs: audioTimeInMiliseconds))
 				} catch {
@@ -259,11 +263,22 @@ public extension Conversation {
 
 		playerNode.stop()
 		queuedSamples.clear()
+		isInterrupting = false
+	}
+
+	@MainActor func stopHandlingVoice() {
+		guard handlingVoice else { return }
+
+		Self.cleanUpAudio(playerNode: playerNode, audioEngine: audioEngine)
+
+		isListening = false
+		handlingVoice = false
 	}
 
 	/// Stop playing audio responses from the model and listening to the user's microphone.
-	@MainActor func stopHandlingVoice() {
-		guard handlingVoice else { return }
+	static func cleanUpAudio(playerNode: AVAudioPlayerNode, audioEngine: AVAudioEngine) {
+		// If attachedNodes does not contain the playerNode then `startHandlingVoice` was never called
+		guard audioEngine.attachedNodes.contains(playerNode) else { return }
 
 		audioEngine.inputNode.removeTap(onBus: 0)
 		audioEngine.stop()
@@ -278,9 +293,6 @@ public extension Conversation {
 			audioEngine.reset()
 		}
 		#endif
-
-		isListening = false
-		handlingVoice = false
 	}
 }
 
@@ -359,12 +371,12 @@ private extension Conversation {
 				if handlingVoice { interruptSpeech() }
 			case .inputAudioBufferSpeechStopped:
 				isUserSpeaking = false
-            case let .responseOutputItemDone(event):
-                updateEvent(id: event.item.id) { message in
-                    guard case let .message(newMessage) = event.item else { return }
-                    
-                    message = newMessage
-                }
+			case let .responseOutputItemDone(event):
+				updateEvent(id: event.item.id) { message in
+					guard case let .message(newMessage) = event.item else { return }
+
+					message = newMessage
+				}
 			default:
 				return
 		}
@@ -419,7 +431,11 @@ private extension Conversation {
 			guard let self else { return }
 
 			self.queuedSamples.popFirst()
-			if self.queuedSamples.isEmpty { playerNode.pause() }
+			if self.queuedSamples.isEmpty {
+				Task { @MainActor in
+					playerNode.pause()
+				}
+			}
 		}
 
 		playerNode.play()
@@ -482,12 +498,14 @@ extension Conversation {
 	/// This is because updating the `queuedSamples` array on a background thread will trigger a re-render of any views that depend on it on that thread.
 	/// So, instead, we observe the property and update `isPlaying` on the main actor.
 	private func _keepIsPlayingPropertyUpdated() {
-		withObservationTracking { _ = queuedSamples.isEmpty } onChange: {
+		withObservationTracking { _ = queuedSamples.isEmpty } onChange: { [weak self] in
 			Task { @MainActor in
+				guard let self else { return }
+
 				self.isPlaying = self.queuedSamples.isEmpty
 			}
 
-			self._keepIsPlayingPropertyUpdated()
+			self?._keepIsPlayingPropertyUpdated()
 		}
 	}
 }
