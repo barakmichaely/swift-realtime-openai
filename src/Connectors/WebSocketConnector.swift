@@ -72,13 +72,13 @@ public final class WebSocketConnector: Connector, Sendable {
 	}
      
      public func send(customEvent: Encodable) async throws {
-          let message = try URLSessionWebSocketTask.Message.string(String(data: encoder.encode(customEvent), encoding: .utf8)!)
-          try await task.send(message)
+         let message = try URLSessionWebSocketTask.Message.string(String(data: encoder.encode(customEvent), encoding: .utf8)!)
+        try await webSocket.send(message)
      }
      
      public func disconnect() {
-          task.cancel(with: .goingAway, reason: nil)
-          stream.finish()
+         task.cancel()
+         stream.finish()
      }
 
 	@MainActor public func onDisconnect(_ action: (@Sendable () -> Void)?) {
